@@ -1,0 +1,7 @@
+app/pq_volume
+
+infra/provider.tf
+infra/.terraform*
+infra/*tfstate*
+
+*.DS_Store

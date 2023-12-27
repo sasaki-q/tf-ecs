@@ -1,0 +1,20 @@
+FROM golang:1.21.0-alpine
+
+WORKDIR /app
+
+RUN go install github.com/cosmtrek/air@latest 
+
+COPY . .
+RUN go mod tidy
+
+ENV PORT=8080
+
+ENV DB_HOST=tf_ecs_database
+ENV DB_PORT=5432
+ENV DB_USER=postgres
+ENV DB_PASSWORD=postgres
+ENV DB_NAME=database
+
+EXPOSE 8080
+
+CMD ["air", "-c", ".air.toml"]
