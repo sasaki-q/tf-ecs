@@ -3,15 +3,14 @@ package database
 import (
 	"app/models"
 	"fmt"
-	"log"
 	"os"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-func New() *gorm.DB {
-	db, err := gorm.Open(
+func New() (*gorm.DB, error) {
+	return gorm.Open(
 		postgres.Open(
 			fmt.Sprintf(
 				"postgres://%s:%s@%s:%s/%s",
@@ -24,12 +23,6 @@ func New() *gorm.DB {
 		),
 		&gorm.Config{},
 	)
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	return db
 }
 
 func Migrate(DB *gorm.DB) {

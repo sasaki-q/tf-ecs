@@ -12,7 +12,12 @@ import (
 func main() {
 	e := server.New()
 
-	db := database.New()
+	db, err := database.New()
+
+	if err != nil {
+		fmt.Print("ERROR: cannot establish connection", err)
+		panic(err)
+	}
 	database.Migrate(db)
 
 	messageStore := stores.NewMessageStore(db)

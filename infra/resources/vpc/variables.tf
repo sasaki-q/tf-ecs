@@ -7,6 +7,17 @@ variable "instance_tenancy" {
   default = "default"
 }
 
+variable "enable_dns_hostnames" {
+  type    = bool
+  default = true
+}
+
+
+variable "enable_dns_support" {
+  type    = bool
+  default = true
+}
+
 variable "name" {
   type = string
 }
