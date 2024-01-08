@@ -105,7 +105,7 @@ variable "database_sg_name" {
 
 variable "private_sg_name" {
   type    = string
-  default = "private-subnet-sg"
+  default = "private-sg"
 }
 
 variable "vpc_endpoint_sg_name" {
@@ -166,10 +166,38 @@ variable "db_name" {
 }
 
 ################################################
+# route53
+################################################
+
+variable "domain_name" {
+  type    = string
+  default = ""
+}
+
+################################################
+# load balancer
+################################################
+
+variable "alb_access_log_bucket_name" {
+  type    = string
+  default = "alb-access-log-bucket"
+}
+
+variable "alb_name" {
+  type    = string
+  default = "load-balancer"
+}
+
+variable "alb_type" {
+  type    = string
+  default = "application"
+}
+
+################################################
 # container
 ################################################
 
-variable "ecr_names" {
+variable "ecr" {
   type = list(object({
     name = string
   }))
@@ -178,12 +206,18 @@ variable "ecr_names" {
   ]
 }
 
+variable "image_tag_mutability" {
+  type    = string
+  default = "IMMUTABLE"
+}
+
 variable "ecs_components" {
   type = object({
     log_group_name = string
     cluster_name   = string
     family_name    = string
     container_name = string
+    container_port = number
     service_name   = string
   })
 
@@ -192,6 +226,7 @@ variable "ecs_components" {
     cluster_name   = "cluster"
     family_name    = "family"
     container_name = "container"
+    container_port = 8080
     service_name   = "service"
   }
 }

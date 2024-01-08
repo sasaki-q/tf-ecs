@@ -1,6 +1,5 @@
-data "aws_caller_identity" "current" {}
-
 locals {
+  public_subnet_ids   = [for v in module.public_subnet : v.id]
   private_subnet_ids  = [for v in module.private_subnet : v.id]
   database_subnet_ids = [for v in module.database_subnet : v.id]
 }
@@ -86,10 +85,10 @@ data "aws_security_group" "vpc_endpoint" {
 module "database_security_group_ingress" {
   source = "./resources/security_group/ingress"
 
-  security_group_id        = data.aws_security_group.database
+  security_group_id        = data.aws_security_group.database.id
   from_port                = 5432
   to_port                  = 5432
-  source_security_group_id = data.aws_security_group.private
+  source_security_group_id = data.aws_security_group.private.id
 
   depends_on = [module.security_group]
 }
@@ -97,10 +96,10 @@ module "database_security_group_ingress" {
 module "vpc_endpoint_security_group_ingress" {
   source = "./resources/security_group/ingress"
 
-  security_group_id        = data.aws_security_group.vpc_endpoint
+  security_group_id        = data.aws_security_group.vpc_endpoint.id
   from_port                = 443
   to_port                  = 443
-  source_security_group_id = data.aws_security_group.private
+  source_security_group_id = data.aws_security_group.private.id
 
   depends_on = [module.security_group]
 }
@@ -117,7 +116,7 @@ module "endpoint" {
   service            = each.value.service
   type               = each.value.type
   subnet_ids         = local.private_subnet_ids
-  security_group_ids = [data.aws_security_group.vpc_endpoint]
+  security_group_ids = [data.aws_security_group.vpc_endpoint.id]
   route_table_ids    = [module.vpc.private_route_table_id]
 
   depends_on = [module.security_group]
@@ -141,9 +140,163 @@ module "database" {
 
   name               = var.db_name
   subnet_group_name  = aws_db_subnet_group.main.name
-  security_group_ids = [data.aws_security_group.database]
+  security_group_ids = [data.aws_security_group.database.id]
 
   depends_on = [module.security_group, aws_db_subnet_group.main]
+}
+
+################################################
+# route53
+################################################
+
+resource "aws_route53_zone" "main" {
+  name = var.domain_name
+}
+
+resource "aws_route53_zone" "stg" {
+  name = "stg.${aws_route53_zone.main.name}"
+
+  tags = {
+    Environment = "staging"
+  }
+}
+
+resource "aws_route53_record" "stg_ns" {
+  zone_id = aws_route53_zone.main.zone_id
+  name    = aws_route53_zone.stg.name
+  type    = "NS"
+  ttl     = "300"
+  records = aws_route53_zone.stg.name_servers
+}
+
+resource "aws_acm_certificate" "main" {
+  domain_name               = aws_route53_zone.stg.name
+  validation_method         = "DNS"
+  subject_alternative_names = ["*.${aws_route53_zone.stg.name}"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+################################################
+# application load balancer
+################################################
+
+resource "aws_s3_bucket" "alb_access_log_bucket" {
+  bucket = var.alb_access_log_bucket_name
+}
+
+data "aws_iam_policy_document" "allow_access_from_alb" {
+  statement {
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::582318560864:root"]
+    }
+
+    actions = ["s3:PutObject"]
+    effect  = "Allow"
+
+    resources = [
+      aws_s3_bucket.alb_access_log_bucket.arn,
+      "${aws_s3_bucket.alb_access_log_bucket.arn}/*",
+    ]
+  }
+}
+
+resource "aws_s3_bucket_policy" "allow_access_from_alb" {
+  bucket = aws_s3_bucket.alb_access_log_bucket.id
+  policy = data.aws_iam_policy_document.allow_access_from_alb.json
+
+  depends_on = [aws_s3_bucket.alb_access_log_bucket]
+}
+
+resource "aws_security_group" "alb_security_group" {
+  name   = "alb-security-group"
+  vpc_id = module.vpc.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "alb-security-group"
+  }
+}
+
+module "alb" {
+  source = "./resources/lb"
+
+  name               = var.alb_name
+  load_balancer_type = var.alb_type
+  subnet_ids         = local.public_subnet_ids
+  security_group_ids = [aws_security_group.alb_security_group.id]
+
+  access_log_config = {
+    bucket_name = split(".", aws_s3_bucket.alb_access_log_bucket.bucket_domain_name)[0]
+    log_prefix  = "alb-access-log"
+    enabled     = true
+  }
+
+  depends_on = [aws_s3_bucket_policy.allow_access_from_alb, aws_security_group.alb_security_group]
+}
+
+resource "aws_lb_target_group" "main" {
+  name        = "alb-target-group-${substr(uuid(), 0, 6)}"
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = module.vpc.vpc_id
+
+  health_check {
+    interval = 300
+    path     = "/hc"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [name]
+  }
+}
+
+resource "aws_lb_listener" "main" {
+  load_balancer_arn = module.alb.id
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = aws_acm_certificate.main.arn
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+}
+
+resource "aws_route53_record" "alb_alias" {
+  zone_id = aws_route53_zone.stg.zone_id
+  name    = "api.${aws_route53_zone.stg.name}"
+  type    = "A"
+
+  alias {
+    zone_id                = module.alb.zone_id
+    name                   = module.alb.dns_name
+    evaluate_target_health = false
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 ################################################
@@ -152,12 +305,12 @@ module "database" {
 
 import {
   to = aws_ecr_repository.main
-  id = "application"
+  id = var.ecr[0].name
 }
 
 resource "aws_ecr_repository" "main" {
-  name                 = "application"
-  image_tag_mutability = "IMMUTABLE"
+  name                 = var.ecr[0].name
+  image_tag_mutability = var.image_tag_mutability
 
   image_scanning_configuration {
     scan_on_push = true
@@ -206,15 +359,14 @@ module "service" {
   source = "./resources/ecs/service"
 
   task_family_name   = var.ecs_components.family_name
-  task_role_arn      = ""
   execution_role_arn = module.ecs_tasks_assume_role.arn
   container_config = {
     name           = var.ecs_components.container_name
     image          = "${resource.aws_ecr_repository.main.repository_url}:v0.1"
     cpu            = 256
     memory         = 512
-    container_port = 8080
-    host_port      = 8080
+    container_port = var.ecs_components.container_port
+    host_port      = var.ecs_components.container_port
     essential      = true
   }
 
@@ -226,7 +378,7 @@ module "service" {
     },
     {
       name  = "DB_PORT"
-      value = "5432"
+      value = tostring(module.database.port)
     },
     {
       name  = "DB_USER"
@@ -245,11 +397,21 @@ module "service" {
   name               = var.ecs_components.service_name
   cluster_id         = module.cluster.id
   subnet_ids         = local.private_subnet_ids
-  security_group_ids = [data.aws_security_group.private]
+  security_group_ids = [data.aws_security_group.private.id]
+  tg_group_id        = aws_lb_target_group.main.id
 
   depends_on = [
     module.endpoint,
     module.cluster,
     module.ecs_tasks_assume_role_attachment
   ]
+}
+
+module "private_subnet_security_group_ingress" {
+  source = "./resources/security_group/ingress"
+
+  security_group_id        = data.aws_security_group.private.id
+  from_port                = var.ecs_components.container_port
+  to_port                  = var.ecs_components.container_port
+  source_security_group_id = aws_security_group.alb_security_group.id
 }

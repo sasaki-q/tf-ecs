@@ -5,7 +5,6 @@ resource "aws_ecs_task_definition" "main" {
   memory                   = var.memory
   requires_compatibilities = var.requires_compatibilities
   execution_role_arn       = var.execution_role_arn
-  //task_role_arn            = var.task_role_arn
 
   container_definitions = jsonencode([
     {
@@ -39,11 +38,16 @@ resource "aws_ecs_service" "main" {
   task_definition = aws_ecs_task_definition.main.arn
   desired_count   = var.desired_count
   launch_type     = var.launch_type
+
   network_configuration {
     subnets          = var.subnet_ids
     security_groups  = var.security_group_ids
     assign_public_ip = var.assign_public_ip
   }
 
-  //iam_role        = aws_iam_role.foo.arn
+  load_balancer {
+    target_group_arn = var.tg_group_id
+    container_name   = var.container_config.name
+    container_port   = var.container_config.container_port
+  }
 }

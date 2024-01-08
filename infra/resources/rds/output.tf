@@ -11,7 +11,6 @@ output "address" {
 }
 
 output "endpoint" {
-  // address:port
   value = aws_db_instance.main.endpoint
 }
 
@@ -26,4 +25,8 @@ output "username" {
 output "password" {
   value     = aws_db_instance.main.password
   sensitive = true
+}
+
+output "port" {
+  value = aws_db_instance.main.port
 }

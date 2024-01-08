@@ -26,10 +26,6 @@ variable "requires_compatibilities" {
   default = ["FARGATE"]
 }
 
-variable "task_role_arn" {
-  type = string
-}
-
 variable "execution_role_arn" {
   type = string
 }
@@ -105,4 +101,8 @@ variable "security_group_ids" {
 variable "assign_public_ip" {
   type    = bool
   default = false
+}
+
+variable "tg_group_id" {
+  type = string
 }
